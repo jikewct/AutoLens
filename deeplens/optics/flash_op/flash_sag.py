@@ -74,43 +74,17 @@ def flash_sag_fwd_kernel(
 
 def flash_sag_fwd(i_x, i_y, k, c, ai2, ai4, ai6, ai8, ai10, ai12):
 
-    # print(i_o.shape)
 
     input_shape = i_x.shape
     i_x, i_y = i_x.reshape(-1), i_y.reshape(-1)
-    # print("eta:", eta)
     (T,) = i_x.shape
-    # print(C)
     o_z = torch.zeros_like(i_x)
-    # print(eta, i_d.dtype, i_d.shape, i_ra.dtype, i_ra.shape, i_obliq.dtype, i_obliq.shape)
-    # print(o_t.device, o_valid.device)
     grid = lambda meta: (triton.cdiv(T, meta["BS"]),)
     flash_sag_fwd_kernel[grid](i_x, i_y, o_z, k, c, ai2, ai4, ai6, ai8, ai10, ai12, T)
     o_z = o_z.reshape(input_shape)
-    # print(o_d.shape, o_ra.shape, o_obliq.shape)
-    # print(o_d[0, :2, :2, :], o_valid[0, :2, :2])
     return o_z
 
 
-# BKV_LIST = [
-#     512,
-#     1024,
-#     2048,
-#     # 16,
-# ]
-
-
-# @triton.autotune(
-#     configs=[
-#         triton.Config({"BS": BS}, num_warps=num_warps, num_stages=num_stages)
-#         for BS in BKV_LIST
-#         # for num_warps in [2, 4, 8]
-#         # for num_stages in [2, 3, 4]
-#         for num_warps in [2]
-#         for num_stages in [2]
-#     ],
-#     key=["T"],
-# )
 
 
 @triton.jit
@@ -130,8 +104,6 @@ def flash_sag_bwd_kernel(
     B_o0 = tl.load(i_x_ptr + offsets, mask=mask)
     B_o1 = tl.load(i_y_ptr + offsets, mask=mask)
     B_dz = tl.load(i_dz_ptr + offsets, mask=mask)
-
-    # data_shape, block_shape = (S, G1, G2, D), (BS, G1, G2, 1)
 
     k, c = tl.load(k_ptr), tl.load(c_ptr)
     ai2, ai4, ai6, ai8, ai10, ai12 = tl.load(ai2_ptr), tl.load(ai4_ptr), tl.load(ai6_ptr), tl.load(ai8_ptr), tl.load(ai10_ptr), tl.load(ai12_ptr)
@@ -208,13 +180,10 @@ def flash_sag_bwd_kernel(
 
 def flash_sag_bwd(i_x, i_y, i_dz, k, c, ai2, ai4, ai6, ai8, ai10, ai12):
 
-    # B, G1, G2, D = i_o.shape
     input_shape = i_x.shape
 
     i_x, i_y = i_x.reshape(-1), i_y.reshape(-1)
-    # print("eta:", eta)
     (T,) = i_x.shape
-    # print(C)
     o_dx, o_dy = torch.zeros_like(i_x), torch.zeros_like(i_y)
     BLOCK_SIZE = 512
     BN = triton.cdiv(T, BLOCK_SIZE)
@@ -229,9 +198,6 @@ def flash_sag_bwd(i_x, i_y, i_dz, k, c, ai2, ai4, ai6, ai8, ai10, ai12):
         torch.zeros_like(o_c),
     )
     grid = (BN,)
-    # grid, locks, o_d, o_k, o_c, o_ai2, o_ai4, o_ai6, o_ai8, o_ai10, o_ai12 = lambda meta: flash_newtons_method_bwd_data(
-    #     T, meta["BS"], d.device, d.dtype
-    # )
     # fmt:off
     flash_sag_bwd_kernel[grid]( 
         i_x, i_y, i_dz, k, c, 
@@ -251,8 +217,6 @@ class FlashSagMethodFunction(torch.autograd.Function):
     def forward(ctx, i_x, i_y, k, c, ai2, ai4, ai6, ai8, ai10, ai12):
 
         o_z = flash_sag_fwd(i_x, i_y, k, c, ai2, ai4, ai6, ai8, ai10, ai12)
-        # print(i_o[..., 0].max(), i_d[..., 0].max(), prev_t.max())
-        # return t, valid
         ctx.save_for_backward(i_x, i_y, k, c, ai2, ai4, ai6, ai8, ai10, ai12)
         return o_z
 
@@ -272,14 +236,10 @@ class FlashSagMethodFunction(torch.autograd.Function):
             torch.sum(o_ai12, 0, keepdim=True),
             torch.sum(o_c, 0, keepdim=True),
         )
-        # print("grad d:", dz_d, o_d, dz_c, o_c)
         return o_dx, o_dy, None, dz_c, dz_ai2, dz_ai4, dz_ai6, dz_ai8, dz_ai10, dz_ai12
 
 
 @torch.compiler.disable
 def flash_sag(i_x, i_y, k, c, ai2, ai4, ai6, ai8, ai10, ai12):
-    # eta = eta.to(device=i_o.device)
-    # if i_x.numel() != i_y.numel():
-    #     i_y = torch.broadcast_to(i_y, i_x.shape)
     z = FlashSagMethodFunction.apply(i_x, i_y, k, c, ai2, ai4, ai6, ai8, ai10, ai12)
     return z

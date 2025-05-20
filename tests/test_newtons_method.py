@@ -9,7 +9,6 @@ from torch.testing import *
 sys.path.append(".")
 sys.path.append("..")
 root_path = os.path.dirname(os.path.dirname(__file__))
-# print(root_path)
 os.chdir(os.path.dirname(os.path.dirname(__file__)))
 import init_lens
 
@@ -56,8 +55,6 @@ def test_newtons_method():
     assert_close(ray1.d, ray2.d)
     assert_close(ray1.ra, ray2.ra)
     assert_close(ray1.obliq, ray2.obliq)
-    # assert_close(tmp_ray1.o.grad, tmp_ray2.o.grad)
-    # assert_close(tmp_ray1.d.grad, tmp_ray2.d.grad)
     assert_close(d_grad, nd_grad)
     assert_close(c_grad, nc_grad)
     assert_close(ai2_grad, nai2_grad)

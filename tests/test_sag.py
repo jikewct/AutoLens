@@ -9,7 +9,6 @@ from torch.testing import *
 sys.path.append(".")
 sys.path.append("..")
 root_path = os.path.dirname(os.path.dirname(__file__))
-# print(root_path)
 os.chdir(os.path.dirname(os.path.dirname(__file__)))
 import init_lens
 
@@ -54,9 +53,7 @@ def test_sag():
         nclen.ai12.grad,
     )
 
-    # print((t - t_2.squeeze(-1)).abs().max(), t.dtype)
     assert_close(z, z2)
-    # print(tmp_ray1.d.grad,tmp_ray2.d.grad)
     assert_close(intersect1.grad, intersect2.grad)
     assert_close(zero_y1.grad, zero_y2.grad)
     assert_close(c_grad, nc_grad)

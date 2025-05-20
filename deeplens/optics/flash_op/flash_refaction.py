@@ -90,9 +90,7 @@ def flash_refaction_fwd_kernel(
     mask = offsets < T
     eta_offsets = offsets // (T // C)
     eta = tl.load(i_eta_ptr + eta_offsets, mask=mask)
-    # tl.device_print("eta:", eta_offsets, eta, mask)
     eta = tl.reshape(eta, (BS, 1))
-    # eta = tl.load(i_eta_ptr)
     # dfdxyz
     r2 = B_o0 * B_o0 + B_o1 * B_o1
     if k > -1:
@@ -147,19 +145,12 @@ def flash_refaction_fwd_kernel(
 
 def flash_refaction_fwd(i_o, i_d, i_ra, i_obliq, eta, d, k, c, ai2, ai4, ai6, ai8, ai10, ai12):
 
-    # print(i_o.shape)
-
     input_shape = i_o.shape
     i_o, i_d, i_ra, i_obliq = i_o.reshape(-1, input_shape[-1]), i_d.reshape(-1, input_shape[-1]), i_ra.reshape(-1, 1), i_obliq.reshape(-1, 1)
 
-    # print("eta:", eta)
     (T, D), (C,) = i_o.shape, eta.shape
-    # print(C)
     o_d, o_ra, o_obliq = torch.zeros_like(i_d), torch.zeros_like(i_ra), torch.zeros_like(i_obliq)
-    # o_d, o_ra, o_obliq = o_d.reshape(-1, input_shape[-1]), o_ra.reshape(-1, 1), o_obliq.reshape(-1, 1)
     o_valid = torch.zeros_like(i_ra, dtype=torch.bool)
-    # print(eta, i_d.dtype, i_d.shape, i_ra.dtype, i_ra.shape, i_obliq.dtype, i_obliq.shape)
-    # print(o_t.device, o_valid.device)
     grid = lambda meta: (triton.cdiv(T, meta["BS"]),)
     flash_refaction_fwd_kernel[grid](i_o, i_d, i_ra, i_obliq, o_d, o_ra, o_obliq, o_valid, eta, d, k, c, ai2, ai4, ai6, ai8, ai10, ai12, C, T, D)
     o_d, o_ra, o_obliq, o_valid = (
@@ -168,30 +159,7 @@ def flash_refaction_fwd(i_o, i_d, i_ra, i_obliq, eta, d, k, c, ai2, ai4, ai6, ai
         o_obliq.reshape(input_shape[:-1]),
         o_valid.reshape(input_shape[:-1]),
     )
-    # print(o_d.shape, o_ra.shape, o_obliq.shape)
-    # print(o_d[0, :2, :2, :], o_valid[0, :2, :2])
     return o_d, o_ra, o_obliq, o_valid
-
-
-# BKV_LIST = [
-#     512,
-#     1024,
-#     2048,
-#     # 16,
-# ]
-
-
-# @triton.autotune(
-#     configs=[
-#         triton.Config({"BS": BS}, num_warps=num_warps, num_stages=num_stages)
-#         for BS in BKV_LIST
-#         # for num_warps in [2, 4, 8]
-#         # for num_stages in [2, 3, 4]
-#         for num_warps in [2]
-#         for num_stages in [2]
-#     ],
-#     key=["T"],
-# )
 
 
 @triton.jit
@@ -254,7 +222,6 @@ def flash_refaction_bwd_kernel(
     eta_mask = offsets < T
     eta_offsets = offsets // (T // C)
     eta = tl.load(i_eta_ptr + eta_offsets, mask=eta_mask)
-    # tl.device_print("eta:", eta_offsets, eta, eta_mask)
     eta = tl.reshape(eta, (BS, 1))
     r2 = B_o0 * B_o0 + B_o1 * B_o1
     if k > -1:
@@ -520,9 +487,6 @@ def flash_refaction_bwd(i_o, i_d, i_ra, i_obliq, d_d, d_ra, d_obliq, eta, d, k, 
         torch.zeros_like(o_d),
     )
     grid = (BN,)
-    # grid, locks, o_d, o_k, o_c, o_ai2, o_ai4, o_ai6, o_ai8, o_ai10, o_ai12 = lambda meta: flash_newtons_method_bwd_data(
-    #     T, meta["BS"], d.device, d.dtype
-    # )
     # fmt:off
     flash_refaction_bwd_kernel[grid](
         i_o, i_d,i_ra,i_obliq, d_d, d_ra,d_obliq,eta, d,k, c,
@@ -543,8 +507,6 @@ class FlashRefractionMethodFunction(torch.autograd.Function):
     def forward(ctx, i_o, i_d, i_ra, i_obliq, eta, d, k, c, ai2, ai4, ai6, ai8, ai10, ai12):
 
         new_d, new_ra, new_obliq, valid = flash_refaction_fwd(i_o, i_d, i_ra, i_obliq, eta, d, k, c, ai2, ai4, ai6, ai8, ai10, ai12)
-        # print(i_o[..., 0].max(), i_d[..., 0].max(), prev_t.max())
-        # return t, valid
         ctx.save_for_backward(i_o, i_d, i_ra, i_obliq, eta, d, k, c, ai2, ai4, ai6, ai8, ai10, ai12)
         return new_d, new_ra, new_obliq, valid
 
@@ -552,9 +514,7 @@ class FlashRefractionMethodFunction(torch.autograd.Function):
     @contiguous
     @autocast_custom_bwd
     def backward(ctx, d_d, d_ra, d_obliq, d_valid):
-        # print(d_d[0, 0, 0, :2, :], d_ra[0, 0, 2, :], d_obliq[0, 0, 2, :])
         i_o, i_d, i_ra, i_obliq, eta, d, k, c, ai2, ai4, ai6, ai8, ai10, ai12 = ctx.saved_tensors
-        # print("d value:", torch.min(torch.abs(i_d)), i_d.shape)
         o_do, o_dd, o_dra, o_dobliq, o_d, o_k, o_c, o_ai2, o_ai4, o_ai6, o_ai8, o_ai10, o_ai12 = flash_refaction_bwd(
             i_o, i_d, i_ra, i_obliq, d_d, d_ra, d_obliq, eta, d, k, c, ai2, ai4, ai6, ai8, ai10, ai12
         )
@@ -569,8 +529,6 @@ class FlashRefractionMethodFunction(torch.autograd.Function):
             torch.sum(o_d, 0, keepdim=True),
             torch.sum(o_c, 0, keepdim=True),
         )
-        # print("grad d:", dd_d, o_d, dd_c, o_c)
-        # print("refraction:", o_do[0, 0, 0, :2, :], o_dd[0, 0, 0, :2, :], o_dra[0, 0, 0, :2], o_dobliq[0, 0, 0, :2])
         return o_do, o_dd, o_dra, o_dobliq, None, dd_d, None, dd_c, dd_ai2, dd_ai4, dd_ai6, dd_ai8, dd_ai10, dd_ai12
 
 

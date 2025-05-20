@@ -53,8 +53,9 @@ class Surface(DeepObj):
         ray = self.refract(ray, n1 / n2)
 
         return ray
+    #ray.o : (len(waves), ...,3),ray.d : (len(waves), ...,3)
+    #the first dimension of ray is the number of waves
     def ray_reaction_multi_waves(self, ray):
-        # print("multi waves", ray.o.shape)
         ray = self.intersect_multi_waves(ray)
         ray = self.refract_multi_waves(ray)
         return ray
@@ -174,7 +175,6 @@ class Surface(DeepObj):
 
         return ray
     def intersect_multi_waves(self, ray):
-        # print("intersect_multi_waves")
         o_o, o_ra = flash_newtons_method(
             ray.o,
             ray.d,
@@ -216,44 +216,6 @@ class Surface(DeepObj):
             self.ai10,
             self.ai12,
         )
-
-        ray.d = o_d
-        ray.obliq = o_obliq
-        ray.ra = o_ra
-        # print("refract_multi all time cost:", time_cost.intervalToNow())
-        return ray
-    def refract_new(self, ray, eta):
-        # print("in refract_new:", eta)
-        # print(ray.d.device, ray.ra.device, ray.obliq.device)
-        # o_d, o_ra, o_obliq = torch.zeros_like(ray.d), torch.zeros_like(ray.ra), torch.zeros_like(ray.obliq)
-        o_d, o_ra, o_obliq, valid = flash_refaction(
-            ray.o,
-            ray.d,
-            ray.ra,
-            ray.obliq,
-            torch.Tensor([eta]).to(device=ray.o.device),
-            (self.d + self.d_perturb),
-            self.k,
-            self.c,
-            self.ai2,
-            self.ai4,
-            self.ai6,
-            self.ai8,
-            self.ai10,
-            self.ai12,
-        )
-
-        # ray.o.retain_grad()
-        # new_d.sum().backward()
-        # print(self.c.grad)
-        # print(ray.o.grad[0, :2, :2, :])
-        # print(ray.d.grad[0, :2, :2, :])
-        # tmp_d = new_d.clone()
-        # tmp_d[~valid] = ray.d[~valid]
-        # new_obliq = torch.sum(o_d * ray.d, axis=-1)
-        # new_obliq[~valid] = ray.obliq[~valid]
-        # ray.ra = ray.ra * valid
-        # Update valid rays
 
         ray.d = o_d
         ray.obliq = o_obliq

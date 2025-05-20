@@ -73,8 +73,6 @@ def flash_newtons_method_fwd_kernel(
     O_B_o2_ptr = tl.make_block_ptr(o_o_ptr, (T, D), (D, 1), (pid * BS, 2), (BS, 1), order=(1, 0))
     O_B_ra_ptr = tl.make_block_ptr(o_ra_ptr, (T, 1), (1, 1), (pid * BS, 0), (BS, 1), order=(1, 0))
     O_B_prev_t_ptr = tl.make_block_ptr(o_prev_t_ptr, (T, 1), (1, 1), (pid * BS, 0), (BS, 1), order=(1, 0))
-    # O_B_t_ptr = tl.make_block_ptr(o_t_ptr, (T, 1), (1, 1), (pid * BS, 0), (BS, 1), order=(1, 0))
-    # O_B_valid_ptr = tl.make_block_ptr(o_valid_ptr, (T, 1), (1, 1), (pid * BS, 0), (BS, 1), order=(1, 0))
 
     B_o0 = tl.load(B_o0_ptr, boundary_check=(0, 1), padding_option="zero")
     B_o1 = tl.load(B_o1_ptr, boundary_check=(0, 1), padding_option="zero")
@@ -204,49 +202,26 @@ def flash_newtons_method_fwd_kernel(
     tl.store(O_B_o1_ptr, vfnew_o1, boundary_check=(0, 1))
     tl.store(O_B_o2_ptr, vfnew_o2, boundary_check=(0, 1))
     tl.store(O_B_ra_ptr, fnew_ra, boundary_check=(0, 1))
-    # tl.store(O_B_t_ptr, final_t, boundary_check=(0, 1))
-    # tl.store(O_B_valid_ptr, ffvalid.to(tl.int8), boundary_check=(0, 1))
 
 
 def flash_newtons_method_fwd(i_o, i_d, i_ra, d, k, c, r, ai2, ai4, ai6, ai8, ai10, ai12, tol_i, tol_t, max_iter, step_bound):
 
-    # print(i_o.shape)
 
     input_shape = i_o.shape
     i_o, i_d, i_ra = i_o.reshape(-1, input_shape[-1]), i_d.reshape(-1, input_shape[-1]), i_ra.reshape(-1, 1)
     T, D = i_o.shape
     o_o, o_ra = torch.zeros_like(i_o), torch.zeros_like(i_ra)
     o_prev_t = torch.zeros((T, 1), dtype=i_o.dtype, device=i_o.device)
-    # o_t, o_valid = torch.zeros_like(o_prev_t), torch.zeros_like(o_prev_t, dtype=torch.bool)
-    # print(o_t.device, o_valid.device)
+
     grid = lambda meta: (triton.cdiv(T, meta["BS"]),)
     flash_newtons_method_fwd_kernel[grid](
         i_o, i_d, i_ra, o_o, o_ra, o_prev_t, d, k, c, r, ai2, ai4, ai6, ai8, ai10, ai12, tol_i, tol_t, max_iter, step_bound, T, D
     )
     o_o, o_ra, o_prev_t = o_o.reshape(input_shape), o_ra.reshape(input_shape[:-1]), o_prev_t.reshape(input_shape[:-1])
-    # o_t, o_valid = o_t.reshape(input_shape[:-1]), o_valid.reshape(input_shape[:-1])
+
     return o_o, o_ra, o_prev_t  # , o_t, o_valid
 
 
-# BKV_LIST = [
-#     512,
-#     1024,
-#     2048,
-#     # 16,
-# ]
-
-
-# @triton.autotune(
-#     configs=[
-#         triton.Config({"BS": BS}, num_warps=num_warps, num_stages=num_stages)
-#         for BS in BKV_LIST
-#         # for num_warps in [2, 4, 8]
-#         # for num_stages in [2, 3, 4]
-#         for num_warps in [2]
-#         for num_stages in [2]
-#     ],
-#     key=["T"],
-# )
 @triton.jit
 def flash_newtons_method_bwd_kernel(
     i_o_ptr,
@@ -255,8 +230,6 @@ def flash_newtons_method_bwd_kernel(
     i_prev_t_ptr,
     i_do_ptr,
     i_dra_ptr,
-    # i_dt_ptr,
-    # i_dvalid_ptr,
     d_ptr,
     k_ptr,
     c_ptr,
@@ -308,8 +281,6 @@ def flash_newtons_method_bwd_kernel(
 
     i_B_ra_ptr = tl.make_block_ptr(i_ra_ptr, (T, 1), (1, 1), (pid * BS, 0), (BS, 1), order=(1, 0))
     i_B_dra_ptr = tl.make_block_ptr(i_dra_ptr, (T, 1), (1, 1), (pid * BS, 0), (BS, 1), order=(1, 0))
-    # i_B_dt_ptr = tl.make_block_ptr(i_dt_ptr, (T, 1), (1, 1), (pid * BS, 0), (BS, 1), order=(1, 0))
-    # i_B_dvalid_ptr = tl.make_block_ptr(i_dvalid_ptr, (T, 1), (1, 1), (pid * BS, 0), (BS, 1), order=(1, 0))
     i_B_prev_t_ptr = tl.make_block_ptr(i_prev_t_ptr, (T, 1), (1, 1), (pid * BS, 0), (BS, 1), order=(1, 0))
 
     mask = (pid * BS + tl.arange(0, BS))[:, None] < T
@@ -325,20 +296,12 @@ def flash_newtons_method_bwd_kernel(
     i_B_do1 = tl.load(i_B_do1_ptr, boundary_check=(0, 1), padding_option="zero")
     i_B_do2 = tl.load(i_B_do2_ptr, boundary_check=(0, 1), padding_option="zero")
     i_B_dra = tl.load(i_B_dra_ptr, boundary_check=(0, 1), padding_option="zero")
-    # i_B_dt = tl.load(i_B_dt_ptr, boundary_check=(0, 1), padding_option="zero")
-    # i_B_dvalid = tl.load(i_B_dvalid_ptr, boundary_check=(0, 1), padding_option="zero")
 
-    # data_shape, block_shape = (S, G1, G2, D), (BS, G1, G2, 1)
-
-    # B_t = tl.load(B_t_ptr, boundary_check=(0, 1))
     B_prev_t_middle = tl.load(i_B_prev_t_ptr, boundary_check=(0, 1))
-    # i_valid_middle = tl.load(B_valid_ptr, boundary_check=(0, 1))
-    # B_dt = tl.load(B_dt_ptr, boundary_check=(0, 1))
-    # B_dvalid = tl.load(B_dvalid_ptr, boundary_check=(0, 1))
+
     d, k, c = tl.load(d_ptr), tl.load(k_ptr), tl.load(c_ptr)
     ai2, ai4, ai6, ai8, ai10, ai12 = tl.load(ai2_ptr), tl.load(ai4_ptr), tl.load(ai6_ptr), tl.load(ai8_ptr), tl.load(ai10_ptr), tl.load(ai12_ptr)
 
-    # valid = (tl.zeros_like(o0) + 1).to(tl.int1)
     t = B_prev_t_middle
     new_o0 = B_o0 + t * B_d0
     new_o1 = B_o1 + t * B_d1
@@ -357,11 +320,8 @@ def flash_newtons_method_bwd_kernel(
     valid_r2_3, valid_r2_4 = valid_r2_2 * valid_r2, valid_r2_2 * valid_r2_2
     valid_r2_5, valid_r2_6 = valid_r2_3 * valid_r2_2, valid_r2_3 * valid_r2_3
     sf = tl.sqrt(1 - (1 + k) * valid_r2 * c * c + EPSILON)
-    # ts = valid_r2 * c / (1 + tl.sqrt(1 - (1 + k) * valid_r2 * c * c) + EPSILON)
     ts = valid_r2 * c / (1 + sf)
-
     ts_1 = ts + ai2 * valid_r2 + ai4 * valid_r2_2 + ai6 * valid_r2_3 + ai8 * valid_r2_4 + ai10 * valid_r2_5 + ai12 * valid_r2_6
-    # ft = ts_1 + d - new_o2 + EPSILON
     ft = ts_1 + d - new_o2
 
     dsdr2 = (1 + sf + (1 + k) * valid_r2 * c * c / 2 / sf) * c / (1 + sf) / (1 + sf)
@@ -377,7 +337,6 @@ def flash_newtons_method_bwd_kernel(
     fvalid_r2 = fvalid_x * fvalid_x + fvalid_y * fvalid_y
     fsf = tl.sqrt(1 - (1 + k) * fvalid_r2 * c * c + EPSILON)
     fts = fvalid_r2 * c / (1 + fsf)
-    # total_surface = valid_r2 * c / (1 + tl.sqrt(1 - (1 + k) * valid_r2 * c * c) + EPSILON)
     fts += (
         ai2 * fvalid_r2
         + ai4 * fvalid_r2 * fvalid_r2
@@ -389,11 +348,6 @@ def flash_newtons_method_bwd_kernel(
     fft = fts + d - new_o2
     ffvalid = fvalid & (tl.abs(fft) < tol_t) & (final_t > 0)
 
-    # fnew_o0 = B_o0 + final_t * B_d0
-    # fnew_o1 = B_o1 + final_t * B_d1
-    # fnew_o2 = B_o2 + final_t * B_d2
-    # fnew_ra = B_ra * ffvalid
-
     dnew_o0_d, dnew_o1_d, dnew_o2_d = B_d0 / B_d2, B_d1 / B_d2, 1
     dnew_o0_o2, dnew_o1_o2, dnew_o2_o2 = -B_d0 / B_d2, -B_d1 / B_d2, 0
     dnew_o0_d0, dnew_o1_d1 = t, t
@@ -404,7 +358,6 @@ def flash_newtons_method_bwd_kernel(
     dvalidx_d0, dvalidy_d1 = valid * dnew_o0_d0, valid * dnew_o1_d1
     dvalidx_d2, dvalidy_d2 = valid * dnew_o0_d2, valid * dnew_o1_d2
     pvalid_r2_validx, pvalid_r2_validy = 2 * valid_x, 2 * valid_y
-    # dvalid_r2_new_o0, dvalid_r2_new_o1 = pvalid_r2_validx * valid, 2 * valid_y * valid
     dvalid_r2_o0, dvalid_r2_o1 = pvalid_r2_validx * dvalidx_o0, pvalid_r2_validy * dvalidy_o1
     dvalid_r2_o2 = pvalid_r2_validx * dvalidx_o2 + pvalid_r2_validy * dvalidy_o2
     dvalid_r2_d0, dvalid_r2_d1 = pvalid_r2_validx * dvalidx_d0, pvalid_r2_validy * dvalidy_d1
@@ -432,8 +385,6 @@ def flash_newtons_method_bwd_kernel(
         pts_valid_r2 * dvalid_r2_d2 + pts_sf * dsf_d2,
     )
     dts_c = pts_c + pts_sf * dsf_c
-    # dts_sf = -1 / (1 + sf) / (1 + sf) * valid_r2 * c * c
-    # dts_valid_r2 = pts_valid_r2 + pts_sf * psf_valid_r2
 
     pts_1_ts = 1
     pts_1_valid_r2 = ai2 + 2 * ai4 * valid_r2 + 3 * ai6 * valid_r2_2 + 4 * ai8 * valid_r2_4 + 5 * ai10 * valid_r2_4 + 6 * ai12 * valid_r2_5
@@ -576,26 +527,6 @@ def flash_newtons_method_bwd_kernel(
     dfnewo2_d2 = pfnewo2_final_t * dfinal_t_d2 + pfnewo2_B_d2
     vfselect = tl.where(ffvalid, 1, 0)
     vfnselect = tl.where(ffvalid, 0, 1)
-    # # pvf_fnewO0, pvf_fnewo1, pvf_fnewo2 = tl.where(ffvalid, 1, 0), tl.where(ffvalid, 1, 0), tl.where(ffvalid, 1, 0)
-    # # pvf_B_o0, pvf_B_o1, pvf_B_o2 = tl.where(ffvalid, 0, 1), tl.where(ffvalid, 0, 1), tl.where(ffvalid, 0, 1)
-
-    # d_c = i_B_dt * dfinal_t_c
-    # d_d = i_B_dt * dfinal_t_d
-
-    # d_o0 = i_B_dt * dfinal_t_o0
-    # d_o1 = i_B_dt * dfinal_t_o1
-    # d_o2 = i_B_dt * dfinal_t_o2
-    # d_d0 = i_B_dt * dfinal_t_d0
-    # d_d1 = i_B_dt * dfinal_t_d1
-    # d_d2 = i_B_dt * dfinal_t_d2
-    # d_c = i_B_do0 * dfnewo0_c + i_B_do1 * dfnewo1_c + i_B_do2 * dfnewo2_c
-    # d_d = i_B_do0 * dfnewo0_d + i_B_do1 * dfnewo1_d + i_B_do2 * dfnewo2_d
-    # d_o0 = i_B_do0 * dfnewo0_o0 + i_B_do1 * dfnewo1_o0 + i_B_do2 * dfnewo2_o0
-    # d_o1 = i_B_do0 * dfnewo0_o1 + i_B_do1 * dfnewo1_o1 + i_B_do2 * dfnewo2_o1
-    # d_o2 = i_B_do0 * dfnewo0_o2 + i_B_do1 * dfnewo1_o2 + i_B_do2 * dfnewo2_o2
-    # d_d0 = i_B_do0 * dfnewo0_d0 + i_B_do1 * dfnewo1_d0 + i_B_do2 * dfnewo2_d0
-    # d_d1 = i_B_do0 * dfnewo0_d1 + i_B_do1 * dfnewo1_d1 + i_B_do2 * dfnewo2_d1
-    # d_d2 = i_B_do0 * dfnewo0_d2 + i_B_do1 * dfnewo1_d2 + i_B_do2 * dfnewo2_d2
 
     dvfnewo0_d, dvfnewo0_c = vfselect * dfnewo0_d, vfselect * dfnewo0_c
     dvfnewo0_o0, dvfnewo0_o1, dvfnewo0_o2 = vfselect * dfnewo0_o0 + vfnselect, vfselect * dfnewo0_o1 + vfnselect, vfselect * dfnewo0_o2 + vfnselect
@@ -622,24 +553,9 @@ def flash_newtons_method_bwd_kernel(
     dfdt_dsdr2_1 = B_d0 * ddfdx_dsdr2_1 + B_d1 * ddfdy_dsdr2_1
     pclamp_dsdr2_1 = pclamp_dfdt * dfdt_dsdr2_1
     dfnewo0_clamp, dfnewo1_clamp, dfnewo2_clamp = B_d0 * pfinalt_clamp, B_d1 * pfinalt_clamp, B_d2 * pfinalt_clamp
-    # dfnewo_clamp = B_d0 * pt_clamp + B_d1 * pt_clamp + B_d2 * pt_clamp
-    # dfnewo_clamp = i_B_do0 * dfnewo0_clamp + i_B_do1 * dfnewo1_clamp + i_B_do2 * dfnewo2_clamp
     dvfnewo0_clamp, dvfnewo1_clamp, dvfnewo2_clamp = vfselect * dfnewo0_clamp, vfselect * dfnewo1_clamp, vfselect * dfnewo2_clamp
     d_clamp = i_B_do0 * dvfnewo0_clamp + i_B_do1 * dvfnewo1_clamp + i_B_do2 * dvfnewo2_clamp
 
-    # d_ai2 = i_B_dt * pfinalt_clamp * (pclamp_ft * valid_r2 + pclamp_dsdr2_1)
-    # d_ai4 = i_B_dt * pfinalt_clamp * (pclamp_ft * valid_r2_2 + pclamp_dsdr2_1 * 2 * valid_r2)
-    # d_ai6 = i_B_dt * pfinalt_clamp * (pclamp_ft * valid_r2_3 + pclamp_dsdr2_1 * 3 * valid_r2_2)
-    # d_ai8 = i_B_dt * pfinalt_clamp * (pclamp_ft * valid_r2_4 + pclamp_dsdr2_1 * 4 * valid_r2_3)
-    # d_ai10 = i_B_dt * pfinalt_clamp * (pclamp_ft * valid_r2_5 + pclamp_dsdr2_1 * 5 * valid_r2_4)
-    # d_ai12 = i_B_dt * pfinalt_clamp * (pclamp_ft * valid_r2_6 + pclamp_dsdr2_1 * 6 * valid_r2_5)
-
-    # d_ai2 = dfnewo_clamp * (pclamp_ft * valid_r2 + pclamp_dsdr2_1)
-    # d_ai4 = dfnewo_clamp * (pclamp_ft * valid_r2_2 + pclamp_dsdr2_1 * 2 * valid_r2)
-    # d_ai6 = dfnewo_clamp * (pclamp_ft * valid_r2_3 + pclamp_dsdr2_1 * 3 * valid_r2_2)
-    # d_ai8 = dfnewo_clamp * (pclamp_ft * valid_r2_4 + pclamp_dsdr2_1 * 4 * valid_r2_3)
-    # d_ai10 = dfnewo_clamp * (pclamp_ft * valid_r2_5 + pclamp_dsdr2_1 * 5 * valid_r2_4)
-    # d_ai12 = dfnewo_clamp * (pclamp_ft * valid_r2_6 + pclamp_dsdr2_1 * 6 * valid_r2_5)
 
     d_ai2 = d_clamp * (pclamp_ft * valid_r2 + pclamp_dsdr2_1)
     d_ai4 = d_clamp * (pclamp_ft * valid_r2_2 + pclamp_dsdr2_1 * 2 * valid_r2)
@@ -688,9 +604,6 @@ def flash_newtons_method_bwd_kernel(
     tl.store(o_d_ptr + pid, dt_d_sum)
     tl.store(o_c_ptr + pid, dt_c_sum)
     tl.atomic_xchg(LOCK, 0)
-    # tl.store(o_ai2_ptr, dt_dai2)
-    # tl.store(o_d_ptr, dt_dd)
-    # tl.store(o_valid_ptr, valid.to(tl.int8), boundary_check=(0))
 
 
 def flash_newtons_method_bwd(i_o, i_d, i_ra, i_prev_t, d_o, d_ra, d, k, c, r, ai2, ai4, ai6, ai8, ai10, ai12, tol_t, step_bound):
@@ -715,9 +628,7 @@ def flash_newtons_method_bwd(i_o, i_d, i_ra, i_prev_t, d_o, d_ra, d, k, c, r, ai
         torch.zeros_like(o_d),
     )
     grid = (BN,)
-    # grid, locks, o_d, o_k, o_c, o_ai2, o_ai4, o_ai6, o_ai8, o_ai10, o_ai12 = lambda meta: flash_newtons_method_bwd_data(
-    #     T, meta["BS"], d.device, d.dtype
-    # )
+
     flash_newtons_method_bwd_kernel[grid](
         i_o,
         i_d,
@@ -761,23 +672,6 @@ def flash_newtons_method_bwd(i_o, i_d, i_ra, i_prev_t, d_o, d_ra, d, k, c, r, ai
     return o_do, o_dd, o_dra, o_d, o_k, o_c, o_ai2, o_ai4, o_ai6, o_ai8, o_ai10, o_ai12
 
 
-# def flash_newtons_method_bwd_data(T, BS, device, dtype):
-#     BN = triton.cdiv(T, BS)
-#     locks = torch.zeros((BN,), dtype=torch.int32, device=device)
-#     o_d = torch.zeros((BN,), device=device, dtype=dtype)
-#     o_k, o_c = torch.zeros_like(o_d), torch.zeros_like(o_d)
-#     o_ai2, o_ai4, o_ai6, o_ai8, o_ai10, o_ai12 = (
-#         torch.zeros_like(o_d),
-#         torch.zeros_like(o_d),
-#         torch.zeros_like(o_d),
-#         torch.zeros_like(o_d),
-#         torch.zeros_like(o_d),
-#         torch.zeros_like(o_d),
-#     )
-#     grid = (BN,)
-#     return grid, locks, o_d, o_k, o_c, o_ai2, o_ai4, o_ai6, o_ai8, o_ai10, o_ai12
-
-
 class FlashNewtonsMethodFunction(torch.autograd.Function):
     @staticmethod
     @contiguous
@@ -787,8 +681,7 @@ class FlashNewtonsMethodFunction(torch.autograd.Function):
         new_o, new_ra, prev_t = flash_newtons_method_fwd(
             i_o, i_d, i_ra, d, k, c, r, ai2, ai4, ai6, ai8, ai10, ai12, tol_i, tol_t, max_iter, step_bound
         )
-        # print(i_o[..., 0].max(), i_d[..., 0].max(), prev_t.max())
-        # return t, valid
+
         ctx.save_for_backward(i_o, i_d, i_ra, prev_t, d, k, c, ai2, ai4, ai6, ai8, ai10, ai12)
         ctx.r, ctx.tol_i, ctx.tol_t, ctx.step_bound = r, tol_i, tol_t, step_bound
         return new_o, new_ra
@@ -799,7 +692,6 @@ class FlashNewtonsMethodFunction(torch.autograd.Function):
     def backward(ctx, d_o, d_ra):
         i_o, i_d, i_ra, prev_t, d, k, c, ai2, ai4, ai6, ai8, ai10, ai12 = ctx.saved_tensors
         r, tol_t, step_bound = ctx.r, ctx.tol_t, ctx.step_bound
-        # print("d value:", torch.min(torch.abs(i_d)), i_d.shape)
         o_do, o_dd, o_dra, o_d, o_k, o_c, o_ai2, o_ai4, o_ai6, o_ai8, o_ai10, o_ai12 = flash_newtons_method_bwd(
             i_o, i_d, i_ra, prev_t, d_o, d_ra, d, k, c, r, ai2, ai4, ai6, ai8, ai10, ai12, tol_t, step_bound
         )
@@ -814,7 +706,6 @@ class FlashNewtonsMethodFunction(torch.autograd.Function):
             torch.sum(o_d, 0, keepdim=True),
             torch.sum(o_c, 0, keepdim=True),
         )
-        # print("grad d:", dt_d, o_d, dt_c, o_c)
         return o_do, o_dd, o_dra, dt_d, None, dt_c, None, dt_ai2, dt_ai4, dt_ai6, dt_ai8, dt_ai10, dt_ai12, None, None, None, None
 
 

@@ -9,7 +9,6 @@ from torch.testing import *
 sys.path.append(".")
 sys.path.append("..")
 root_path = os.path.dirname(os.path.dirname(__file__))
-# print(root_path)
 os.chdir(os.path.dirname(os.path.dirname(__file__)))
 import init_lens
 

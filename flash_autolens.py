@@ -89,11 +89,9 @@ def curriculum_design(self, lrs=[5e-4, 1e-4, 0.1, 1e-4], decay=0.02, iterations=
 
         optimizer = self.get_optimizer(lrs, decay)
         scheduler = get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=iterations//10, num_training_steps=iterations)
-        train_time_cost = TimeMeter()
         # Training
         pbar = tqdm(total=iterations+1, desc='Progress', postfix={'loss': 0})
         for i in range(iterations+1):
-            train_time_cost.start()
             # =====> Evaluate the lens
             if i % test_per_iter == 0:
                 # Change aperture, curriculum learning
@@ -104,8 +102,8 @@ def curriculum_design(self, lrs=[5e-4, 1e-4, 0.1, 1e-4], decay=0.02, iterations=
                 # Correct shape and evaluate
                 if i > 0:   
                     self.correct_shape()
-                self.write_lens_json(f'{result_dir}/iter{i}.json')
-                self.analysis(f'{result_dir}/iter{i}', zmx_format=True, plot_invalid=True, multi_plot=False)
+                # self.write_lens_json(f'{result_dir}/iter{i}.json')
+                # self.analysis(f'{result_dir}/iter{i}', zmx_format=True, plot_invalid=True, multi_plot=False)
 
                     
             # =====> Compute centriod and sample new rays
@@ -132,25 +130,6 @@ def curriculum_design(self, lrs=[5e-4, 1e-4, 0.1, 1e-4], decay=0.02, iterations=
                     merged_angle_rays = merge_rays(angle_rays_backup)
                     point_rays_num, parallel_rays_num, angle_rays_num = merged_point_rays.o.shape[1], 1, merged_angle_rays.o.shape[1]
                     concated_rays = concat_rays(merged_point_rays, merged_parallel_rays, merged_angle_rays)
-    
-            # =====> Optimize lens by minimizing rms
-            # loss_rms = []
-            # for j, wv in enumerate(WAVE_RGB):
-            #     # Ray tracing
-            #     ray = rays_backup[j].clone()
-            #     ray, _, _ = self.trace(ray)
-            #     xy = ray.project_to(self.d_sensor)
-            #     xy_norm = (xy - center_p) * ray.ra.unsqueeze(-1)
-
-            #     # Weighted loss
-            #     weight_mask = (xy_norm.clone().detach()**2).sum([0, -1]) / (ray.ra.sum([0]) + EPSILON) # Use L2 error as weight mask
-            #     weight_mask /= weight_mask.mean()   # shape of [M, M]
-                
-            #     l_rms = torch.sqrt(torch.sum((xy_norm**2 + EPSILON).sum(-1) * weight_mask) / (torch.sum(ray.ra) + EPSILON))  # weighted L2 loss
-            #     loss_rms.append(l_rms)
-
-            # loss_rms = sum(loss_rms) / len(loss_rms)
-
             all_rays = concated_rays.clone()
             all_rays, _, _ = self.trace(all_rays, use_flash_method=True)
             point_rays, parallel_rays, angle_rays = split_rays(all_rays, point_rays_num, parallel_rays_num, angle_rays_num)
@@ -161,34 +140,29 @@ def curriculum_design(self, lrs=[5e-4, 1e-4, 0.1, 1e-4], decay=0.02, iterations=
 
             weight_mask = (xy_norm.clone().detach() ** 2).sum([1, -1]) / (point_rays.ra.sum([1]) + EPSILON)  # Use L2 error as weight mask
             weight_mask /= weight_mask.mean([1, 2])[:, None, None]  # shape of [M, M]
-            # ##print("weight_mask:", weight_mask.shape)
             loss_rms = torch.sqrt(
                 torch.sum((xy_norm**2 + EPSILON).sum(-1) * weight_mask.unsqueeze(1)) / (torch.sum(point_rays.ra) + EPSILON)
             )
-            # print("foward rms loss:", train_time_cost.intervalToNow())
             # Regularization
 
             p = parallel_rays.project_to(self.d_sensor)
             # Calculate RMS spot size as loss function
             rms_size = torch.sqrt(torch.sum((p**2 + EPSILON) * parallel_rays.ra.unsqueeze(-1)) / (torch.sum(parallel_rays.ra) + EPSILON))
             loss_focus = max(rms_size, 0.005)
-            # print("foward parallel_rays cost:", train_time_cost.intervalToNow())
 
             angle_loss = torch.sum(angle_rays.obliq * angle_rays.ra) / (torch.sum(angle_rays.ra) + EPSILON)
             angle_loss = min(angle_loss, 0.6)
-            # angle_loss = 0
-            # print("foward angle_rays cost:", train_time_cost.intervalToNow(), self.is_cellphone)
+
             loss_focus_avg = loss_focus
-            # ##print("before loss_reg time cost:", train_time_cost.intervalToNow())
+
             if self.is_cellphone:
                 loss_reg = 2.0 * loss_focus_avg + 0.05 * angle_loss + self.loss_self_intersec_new(dist_bound=0.1, thickness_bound=0.3, flange_bound=0.5)
             else:
                 loss_reg = 2.0 * loss_focus_avg + self.loss_self_intersec_new(dist_bound=0.1, thickness_bound=2.0, flange_bound=10.0)
 
-                # loss_reg = self.loss_reg(use_flash_method=True)
             w_reg = 0.1
             L_total = loss_rms + w_reg * loss_reg
-            # L_total = loss_rms
+
             # Gradient-based optimization
             optimizer.zero_grad()
             L_total.backward()
@@ -197,8 +171,6 @@ def curriculum_design(self, lrs=[5e-4, 1e-4, 0.1, 1e-4], decay=0.02, iterations=
 
             pbar.set_postfix(rms=loss_rms.item())
             pbar.update(1)
-            train_time_cost.reset()
-
         pbar.close()
 
 def concat_rays(point_rays, parellel_rays, angle_rays):
@@ -260,7 +232,7 @@ if __name__=='__main__':
     
     # =====> 2. Curriculum learning with RMS errors
     lrs = [float(lr) for lr in args['lrs']]
-    lens.curriculum_design(lrs=lrs, decay=0.01, iterations=5000, test_per_iter=50, result_dir=args['result_dir'])
+    lens.curriculum_design(lrs=lrs, decay=0.01, iterations=5000, test_per_iter=100, result_dir=args['result_dir'])
 
     # Need to train more for the best optical performance
 
